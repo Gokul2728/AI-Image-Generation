@@ -1,0 +1,7 @@
+{
+  "name": "Lumina Edit",
+  "description": "A high-end AI image editor powered by Gemini 2.5 Flash, specializing in stylistic transformations and cinematic enhancements.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
