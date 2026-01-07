@@ -2,52 +2,121 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Button } from './components/Button';
 import { editImage, generateSuggestedPrompts } from './services/geminiService';
-import { ImageState, EditHistoryItem } from './types';
+import { ImageState, EditHistoryItem, SuggestedPrompt } from './types';
 
 const INITIAL_PROMPT = `Without changing the face. High-angle POV, medium close-up of a young South Asian woman with long messy dark hair, reclining on floral bedding. Intimate calm gaze, dewy makeup with pink blush and highlighter. Wearing pastel pink chiffon ethnic wear with shimmering gold Zari work, jhumkas, and bangles. Hard on-camera flash lighting, deep vignette, dark bedroom background with wooden headboard. Lo-fi grainy CCD texture nostalgic mood.`;
 
-interface SuggestedPrompt {
-  id: string;
-  label: string;
-  icon: string;
-  prompt: string;
-}
-
 export default function App() {
-  const [imageState, setImageState] = useState<ImageState & { _showOrig?: boolean }>({
+  const [imageState, setImageState] = useState<ImageState>({
     originalUrl: '',
     isProcessing: false,
+    showComparison: false,
   });
   const [prompt, setPrompt] = useState(INITIAL_PROMPT);
   const [history, setHistory] = useState<EditHistoryItem[]>([]);
   const [suggestedPrompts, setSuggestedPrompts] = useState<SuggestedPrompt[]>([]);
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Check for API Key on mount
+  useEffect(() => {
+    if (!process.env.API_KEY) {
+      setImageState(prev => ({ 
+        ...prev, 
+        error: "Critical: API_KEY environment variable is missing. The editor will not function." 
+      }));
+    }
+  }, []);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const base64 = event.target?.result as string;
-        setImageState({
-          originalUrl: base64,
-          isProcessing: false,
-          error: undefined
-        });
-        
-        // Trigger suggestion generation
-        setIsGeneratingSuggestions(true);
-        try {
-          const suggestions = await generateSuggestedPrompts(base64);
-          setSuggestedPrompts(suggestions);
-        } catch (err) {
-          console.error("Prompt generation failed", err);
-        } finally {
-          setIsGeneratingSuggestions(false);
-        }
-      };
-      reader.readAsDataURL(file);
+      processImageSource(file);
+    }
+  };
+
+  const processImageSource = (source: File | string) => {
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64 = event.target?.result as string;
+      setImageState({
+        originalUrl: base64,
+        isProcessing: false,
+        error: undefined,
+        showComparison: false
+      });
+      
+      setIsGeneratingSuggestions(true);
+      try {
+        const suggestions = await generateSuggestedPrompts(base64);
+        setSuggestedPrompts(suggestions);
+      } catch (err) {
+        console.error("Prompt generation failed", err);
+      } finally {
+        setIsGeneratingSuggestions(false);
+      }
+    };
+
+    if (source instanceof File) {
+      reader.readAsDataURL(source);
+    } else {
+      // If it's already a base64 string from camera
+      setImageState({
+        originalUrl: source,
+        isProcessing: false,
+        error: undefined,
+        showComparison: false
+      });
+      fetchSuggestions(source);
+    }
+  };
+
+  const fetchSuggestions = async (base64: string) => {
+    setIsGeneratingSuggestions(true);
+    try {
+      const suggestions = await generateSuggestedPrompts(base64);
+      setSuggestedPrompts(suggestions);
+    } catch (err) {
+      console.error("Prompt generation failed", err);
+    } finally {
+      setIsGeneratingSuggestions(false);
+    }
+  };
+
+  const startCamera = async () => {
+    setIsCameraActive(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.error("Camera access denied", err);
+      setIsCameraActive(false);
+      setImageState(prev => ({ ...prev, error: "Camera access denied. Please check your permissions." }));
+    }
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(video, 0, 0);
+      const dataUrl = canvas.toDataURL('image/png');
+      
+      // Stop stream
+      const stream = video.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      
+      setIsCameraActive(false);
+      processImageSource(dataUrl);
     }
   };
 
@@ -73,7 +142,7 @@ export default function App() {
   };
 
   const clearImage = () => {
-    setImageState({ originalUrl: '', isProcessing: false });
+    setImageState({ originalUrl: '', isProcessing: false, showComparison: false });
     setSuggestedPrompts([]);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -91,7 +160,6 @@ export default function App() {
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-950 text-zinc-100 selection:bg-indigo-500/30">
-      {/* Header */}
       <header className="sticky top-0 z-50 w-full border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-md">
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-2">
@@ -112,25 +180,40 @@ export default function App() {
       </header>
 
       <main className="flex-1 container mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left Column: Editor Workspace */}
         <div className="lg:col-span-8 space-y-6">
-          {/* Main Viewport */}
           <div className="relative aspect-[4/3] md:aspect-[16/10] bg-zinc-900 rounded-2xl border border-zinc-800 overflow-hidden flex items-center justify-center group shadow-2xl">
-            {!imageState.originalUrl ? (
+            {isCameraActive ? (
+              <div className="relative w-full h-full flex flex-col items-center justify-center">
+                <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+                <div className="absolute bottom-8 flex space-x-4">
+                  <Button onClick={capturePhoto} variant="primary" icon={<i className="fa-solid fa-camera"></i>}>Capture Photo</Button>
+                  <Button onClick={() => setIsCameraActive(false)} variant="secondary">Cancel</Button>
+                </div>
+              </div>
+            ) : !imageState.originalUrl ? (
               <div className="text-center p-8">
                 <div className="w-20 h-20 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-4 border border-zinc-700 shadow-inner">
                   <i className="fa-solid fa-image text-zinc-500 text-3xl"></i>
                 </div>
-                <h3 className="text-lg font-medium mb-2">Upload an image to start</h3>
+                <h3 className="text-lg font-medium mb-2">Upload or capture an image</h3>
                 <p className="text-zinc-500 text-sm mb-6 max-w-xs mx-auto">
-                  Select a photo you'd like to stylize or transform with AI.
+                  Select a photo or use your camera to start stylizing with AI.
                 </p>
-                <Button 
-                  onClick={() => fileInputRef.current?.click()}
-                  icon={<i className="fa-solid fa-cloud-arrow-up"></i>}
-                >
-                  Choose File
-                </Button>
+                <div className="flex justify-center space-x-3">
+                  <Button 
+                    onClick={() => fileInputRef.current?.click()}
+                    icon={<i className="fa-solid fa-cloud-arrow-up"></i>}
+                  >
+                    Choose File
+                  </Button>
+                  <Button 
+                    variant="secondary"
+                    onClick={startCamera}
+                    icon={<i className="fa-solid fa-camera"></i>}
+                  >
+                    Use Camera
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className="relative w-full h-full">
@@ -167,28 +250,28 @@ export default function App() {
                       <div className="absolute inset-0 border-4 border-indigo-500/20 rounded-full"></div>
                       <div className="absolute inset-0 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
                     </div>
-                    <p className="text-indigo-400 font-medium animate-pulse">Lumina is imagining your edit...</p>
+                    <p className="text-indigo-400 font-medium animate-pulse">Lumina is processing...</p>
                   </div>
                 )}
 
                 {imageState.editedUrl && !imageState.isProcessing && (
                   <div className="absolute bottom-4 left-4 flex space-x-2">
                     <span className="bg-indigo-600 text-[10px] uppercase font-bold px-2 py-1 rounded shadow-lg">
-                      AI Generated Result
+                      Generated Result
                     </span>
                     <button 
-                      onMouseDown={() => setImageState(s => ({...s, _showOrig: true}))}
-                      onMouseUp={() => setImageState(s => ({...s, _showOrig: false}))}
-                      onTouchStart={() => setImageState(s => ({...s, _showOrig: true}))}
-                      onTouchEnd={() => setImageState(s => ({...s, _showOrig: false}))}
-                      className="bg-zinc-800 text-[10px] uppercase font-bold px-2 py-1 rounded shadow-lg active:bg-zinc-700 select-none cursor-pointer"
+                      onMouseDown={() => setImageState(s => ({...s, showComparison: true}))}
+                      onMouseUp={() => setImageState(s => ({...s, showComparison: false}))}
+                      onTouchStart={() => setImageState(s => ({...s, showComparison: true}))}
+                      onTouchEnd={() => setImageState(s => ({...s, showComparison: false}))}
+                      className="bg-zinc-800 text-[10px] uppercase font-bold px-2 py-1 rounded shadow-lg active:bg-zinc-700 select-none"
                     >
-                      Hold to compare
+                      Compare
                     </button>
                   </div>
                 )}
                 
-                {imageState._showOrig && imageState.editedUrl && (
+                {imageState.showComparison && imageState.editedUrl && (
                    <img 
                     src={imageState.originalUrl} 
                     alt="Original comparison"
@@ -199,20 +282,20 @@ export default function App() {
             )}
           </div>
 
-          {/* Control Panel */}
+          <canvas ref={canvasRef} className="hidden" />
+
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-xl space-y-6">
-            {/* Suggested Prompts Section */}
             {imageState.originalUrl && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <i className="fa-solid fa-wand-magic text-indigo-400 text-xs"></i>
-                    <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Dynamic Style Suggestions</h3>
+                    <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Suggested Styles</h3>
                   </div>
                   {isGeneratingSuggestions && (
                     <div className="flex items-center space-x-2 text-[10px] text-zinc-500 animate-pulse">
                       <i className="fa-solid fa-spinner fa-spin"></i>
-                      <span>Analyzing image...</span>
+                      <span>Thinking...</span>
                     </div>
                   )}
                 </div>
@@ -234,7 +317,7 @@ export default function App() {
                       </button>
                     ))
                   ) : !isGeneratingSuggestions && (
-                    <p className="text-[11px] text-zinc-600">No suggestions available.</p>
+                    <p className="text-[11px] text-zinc-600 italic">No suggestions available.</p>
                   )}
                 </div>
               </div>
@@ -244,19 +327,19 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wider flex items-center">
                   <i className="fa-solid fa-terminal mr-2 text-indigo-500"></i>
-                  Transformation Prompt
+                  Edit Prompt
                 </label>
                 <button 
                   onClick={() => setPrompt(INITIAL_PROMPT)}
                   className="text-xs text-zinc-500 hover:text-indigo-400 transition-colors"
                 >
-                  Reset to default
+                  Reset
                 </button>
               </div>
               <textarea 
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe the styling, mood, or edits..."
+                placeholder="Describe your transformation..."
                 className="w-full h-32 bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-zinc-100 placeholder-zinc-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none outline-none leading-relaxed"
               />
               {imageState.error && (
@@ -278,7 +361,7 @@ export default function App() {
                   onClick={() => fileInputRef.current?.click()}
                   disabled={imageState.isProcessing}
                 >
-                  Change Photo
+                  Change
                 </Button>
                 <Button 
                   onClick={handleEdit} 
@@ -287,14 +370,13 @@ export default function App() {
                   icon={<i className="fa-solid fa-sparkles"></i>}
                   className="min-w-[140px]"
                 >
-                  Process Edit
+                  Apply AI Edit
                 </Button>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Right Column: History & Sidebar */}
         <div className="lg:col-span-4 space-y-6">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-xl flex flex-col h-full max-h-[800px]">
             <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
@@ -330,14 +412,12 @@ export default function App() {
                         <button 
                           onClick={() => setImageState(s => ({...s, editedUrl: item.url}))}
                           className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"
-                          title="View"
                         >
                           <i className="fa-solid fa-eye text-[10px]"></i>
                         </button>
                         <button 
                           onClick={() => downloadImage(item.url)}
                           className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"
-                          title="Download"
                         >
                           <i className="fa-solid fa-download text-[10px]"></i>
                         </button>
@@ -350,9 +430,9 @@ export default function App() {
             
             <div className="p-4 bg-zinc-950/50 border-t border-zinc-800">
               <div className="p-3 rounded-xl bg-indigo-500/5 border border-indigo-500/10">
-                <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-tighter mb-1">Dual Model Pipeline</h4>
+                <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-tighter mb-1">System Health</h4>
                 <p className="text-[10px] text-zinc-500 leading-tight">
-                  Gemini 3 Flash analyzes your image for trends, and Gemini 2.5 Flash renders the masterpiece.
+                  {process.env.API_KEY ? "Gemini Models are ready to process your request." : "Disconnected: No API Key detected."}
                 </p>
               </div>
             </div>
@@ -360,11 +440,10 @@ export default function App() {
         </div>
       </main>
 
-      {/* Footer */}
       <footer className="py-8 border-t border-zinc-900">
         <div className="container mx-auto px-4 text-center">
           <p className="text-zinc-600 text-sm">
-            Powered by Google Gemini &bull; Intelligent Stylization Engine
+            Powered by Google Gemini &bull; Real-time AI Vision Edit
           </p>
         </div>
       </footer>

@@ -4,6 +4,7 @@ export interface ImageState {
   editedUrl?: string;
   prompt?: string;
   isProcessing: boolean;
+  showComparison?: boolean;
   error?: string;
 }
 
@@ -12,4 +13,11 @@ export interface EditHistoryItem {
   url: string;
   prompt: string;
   timestamp: number;
+}
+
+export interface SuggestedPrompt {
+  id: string;
+  label: string;
+  icon: string;
+  prompt: string;
 }
