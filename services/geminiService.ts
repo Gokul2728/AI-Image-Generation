@@ -49,7 +49,7 @@ export async function editImage(base64Image: string, prompt: string, mimeType: s
   }
 }
 
-export async function generateSuggestedPrompts(base64Image: string, mimeType: string = 'image/png') {
+export async function generateSuggestedPrompts(base64Image: string, mimeType: string = 'image/png'): Promise<any[]> {
   if (!process.env.API_KEY) {
     throw new Error("API Key is missing.");
   }
@@ -57,8 +57,8 @@ export async function generateSuggestedPrompts(base64Image: string, mimeType: st
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const prompt = `Analyze this image and suggest 6 diverse, high-quality, and trending image editing prompts. 
-  The prompts should describe a total transformation of the mood or style while ideally preserving the core subject. 
-  Styles could include cinematic, retro, futuristic, artistic, fashion editorial, or high-end digital art.
+  One of these should be designated as the 'Viral' choice based on current social media aesthetics (e.g. CCD retro, Cyberpunk, Old Money, etc.).
+  The 'sampleOutcome' field should describe in 10-15 words exactly what the visual change will look like (e.g. "Warm sunset glow with soft hazy edges and vintage film grain").
   Return the suggestions as a JSON array.`;
 
   try {
@@ -83,11 +83,12 @@ export async function generateSuggestedPrompts(base64Image: string, mimeType: st
             type: Type.OBJECT,
             properties: {
               id: { type: Type.STRING },
-              label: { type: Type.STRING, description: "Short title of the style, e.g., 'Neon Cyberpunk'" },
-              icon: { type: Type.STRING, description: "FontAwesome 6 icon class, e.g., 'fa-bolt' or 'fa-film'" },
+              label: { type: Type.STRING, description: "Short title of the style" },
+              icon: { type: Type.STRING, description: "FontAwesome 6 icon class" },
               prompt: { type: Type.STRING, description: "Detailed instruction for the edit model" },
+              sampleOutcome: { type: Type.STRING, description: "Vivid description of the visual result" },
             },
-            required: ["id", "label", "icon", "prompt"],
+            required: ["id", "label", "icon", "prompt", "sampleOutcome"],
           },
         },
       },

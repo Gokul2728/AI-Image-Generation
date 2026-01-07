@@ -20,4 +20,5 @@ export interface SuggestedPrompt {
   label: string;
   icon: string;
   prompt: string;
+  sampleOutcome: string;
 }

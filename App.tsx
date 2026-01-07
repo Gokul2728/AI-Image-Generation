@@ -22,7 +22,6 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Check for API Key on mount
   useEffect(() => {
     if (!process.env.API_KEY) {
       setImageState(prev => ({ 
@@ -49,22 +48,12 @@ export default function App() {
         error: undefined,
         showComparison: false
       });
-      
-      setIsGeneratingSuggestions(true);
-      try {
-        const suggestions = await generateSuggestedPrompts(base64);
-        setSuggestedPrompts(suggestions);
-      } catch (err) {
-        console.error("Prompt generation failed", err);
-      } finally {
-        setIsGeneratingSuggestions(false);
-      }
+      fetchSuggestions(base64);
     };
 
     if (source instanceof File) {
       reader.readAsDataURL(source);
     } else {
-      // If it's already a base64 string from camera
       setImageState({
         originalUrl: source,
         isProcessing: false,
@@ -110,11 +99,8 @@ export default function App() {
       const ctx = canvas.getContext('2d');
       ctx?.drawImage(video, 0, 0);
       const dataUrl = canvas.toDataURL('image/png');
-      
-      // Stop stream
       const stream = video.srcObject as MediaStream;
       stream.getTracks().forEach(track => track.stop());
-      
       setIsCameraActive(false);
       processImageSource(dataUrl);
     }
@@ -122,13 +108,10 @@ export default function App() {
 
   const handleEdit = async () => {
     if (!imageState.originalUrl || !prompt) return;
-
     setImageState(prev => ({ ...prev, isProcessing: true, error: undefined }));
-
     try {
       const editedUrl = await editImage(imageState.originalUrl, prompt);
       setImageState(prev => ({ ...prev, editedUrl, isProcessing: false }));
-      
       const newHistoryItem: EditHistoryItem = {
         id: Date.now().toString(),
         url: editedUrl,
@@ -157,6 +140,9 @@ export default function App() {
   const applySuggestedPrompt = (p: string) => {
     setPrompt(p);
   };
+
+  const viralChoice = suggestedPrompts[0];
+  const otherChoices = suggestedPrompts.slice(1);
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-950 text-zinc-100 selection:bg-indigo-500/30">
@@ -200,50 +186,23 @@ export default function App() {
                   Select a photo or use your camera to start stylizing with AI.
                 </p>
                 <div className="flex justify-center space-x-3">
-                  <Button 
-                    onClick={() => fileInputRef.current?.click()}
-                    icon={<i className="fa-solid fa-cloud-arrow-up"></i>}
-                  >
-                    Choose File
-                  </Button>
-                  <Button 
-                    variant="secondary"
-                    onClick={startCamera}
-                    icon={<i className="fa-solid fa-camera"></i>}
-                  >
-                    Use Camera
-                  </Button>
+                  <Button onClick={() => fileInputRef.current?.click()} icon={<i className="fa-solid fa-cloud-arrow-up"></i>}>Choose File</Button>
+                  <Button variant="secondary" onClick={startCamera} icon={<i className="fa-solid fa-camera"></i>}>Use Camera</Button>
                 </div>
               </div>
             ) : (
               <div className="relative w-full h-full">
                 <img 
                   src={imageState.editedUrl || imageState.originalUrl} 
-                  alt="Editor workspace"
+                  alt="Workspace"
                   className={`w-full h-full object-contain transition-all duration-700 ${imageState.isProcessing ? 'blur-sm grayscale opacity-50' : ''}`}
                 />
-                
                 <div className="absolute top-4 right-4 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                   {imageState.editedUrl && (
-                    <Button 
-                      variant="secondary" 
-                      className="!p-2 h-10 w-10" 
-                      onClick={() => downloadImage(imageState.editedUrl!)}
-                      title="Download"
-                    >
-                      <i className="fa-solid fa-download"></i>
-                    </Button>
+                    <Button variant="secondary" className="!p-2 h-10 w-10" onClick={() => downloadImage(imageState.editedUrl!)} title="Download"><i className="fa-solid fa-download"></i></Button>
                   )}
-                  <Button 
-                    variant="danger" 
-                    className="!p-2 h-10 w-10" 
-                    onClick={clearImage}
-                    title="Clear"
-                  >
-                    <i className="fa-solid fa-trash-can"></i>
-                  </Button>
+                  <Button variant="danger" className="!p-2 h-10 w-10" onClick={clearImage} title="Clear"><i className="fa-solid fa-trash-can"></i></Button>
                 </div>
-
                 {imageState.isProcessing && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center space-y-4 bg-zinc-950/30 backdrop-blur-[2px]">
                     <div className="relative w-16 h-16">
@@ -253,30 +212,18 @@ export default function App() {
                     <p className="text-indigo-400 font-medium animate-pulse">Lumina is processing...</p>
                   </div>
                 )}
-
                 {imageState.editedUrl && !imageState.isProcessing && (
                   <div className="absolute bottom-4 left-4 flex space-x-2">
-                    <span className="bg-indigo-600 text-[10px] uppercase font-bold px-2 py-1 rounded shadow-lg">
-                      Generated Result
-                    </span>
+                    <span className="bg-indigo-600 text-[10px] uppercase font-bold px-2 py-1 rounded shadow-lg">Result</span>
                     <button 
                       onMouseDown={() => setImageState(s => ({...s, showComparison: true}))}
                       onMouseUp={() => setImageState(s => ({...s, showComparison: false}))}
-                      onTouchStart={() => setImageState(s => ({...s, showComparison: true}))}
-                      onTouchEnd={() => setImageState(s => ({...s, showComparison: false}))}
                       className="bg-zinc-800 text-[10px] uppercase font-bold px-2 py-1 rounded shadow-lg active:bg-zinc-700 select-none"
-                    >
-                      Compare
-                    </button>
+                    >Compare</button>
                   </div>
                 )}
-                
                 {imageState.showComparison && imageState.editedUrl && (
-                   <img 
-                    src={imageState.originalUrl} 
-                    alt="Original comparison"
-                    className="absolute inset-0 w-full h-full object-contain z-10"
-                  />
+                   <img src={imageState.originalUrl} alt="Original" className="absolute inset-0 w-full h-full object-contain z-10" />
                 )}
               </div>
             )}
@@ -286,11 +233,12 @@ export default function App() {
 
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-xl space-y-6">
             {imageState.originalUrl && (
-              <div className="space-y-3">
+              <div className="space-y-4">
+                {/* Viral Spotlight Card */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <i className="fa-solid fa-wand-magic text-indigo-400 text-xs"></i>
-                    <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Suggested Styles</h3>
+                    <i className="fa-solid fa-bolt text-amber-400 text-xs animate-pulse"></i>
+                    <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Viral Suggestion</h3>
                   </div>
                   {isGeneratingSuggestions && (
                     <div className="flex items-center space-x-2 text-[10px] text-zinc-500 animate-pulse">
@@ -299,14 +247,36 @@ export default function App() {
                     </div>
                   )}
                 </div>
-                
-                <div className="flex overflow-x-auto pb-2 space-x-2 custom-scrollbar scrollbar-hide">
-                  {isGeneratingSuggestions ? (
-                    [...Array(4)].map((_, i) => (
-                      <div key={i} className="flex-shrink-0 w-32 h-8 bg-zinc-800 rounded-full animate-pulse border border-zinc-700"></div>
-                    ))
-                  ) : suggestedPrompts.length > 0 ? (
-                    suggestedPrompts.map((style) => (
+
+                {isGeneratingSuggestions ? (
+                  <div className="w-full h-24 bg-zinc-950 rounded-xl border border-zinc-800/50 animate-pulse"></div>
+                ) : viralChoice && (
+                  <div 
+                    onClick={() => applySuggestedPrompt(viralChoice.prompt)}
+                    className="relative p-4 rounded-xl bg-gradient-to-br from-indigo-500/10 to-transparent border border-indigo-500/30 cursor-pointer hover:border-indigo-400 transition-all group overflow-hidden"
+                  >
+                    <div className="absolute top-0 right-0 px-3 py-1 bg-indigo-500 text-[9px] font-bold uppercase tracking-tighter rounded-bl-lg">Most Viral</div>
+                    <div className="flex items-start space-x-4">
+                      <div className="w-10 h-10 rounded-lg bg-zinc-900 flex items-center justify-center border border-zinc-800">
+                        <i className={`fa-solid ${viralChoice.icon} text-indigo-400`}></i>
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="text-sm font-bold text-white mb-1 group-hover:text-indigo-300 transition-colors">{viralChoice.label}</h4>
+                        <div className="p-2 rounded bg-zinc-950/50 border border-zinc-800/50">
+                          <p className="text-[11px] text-zinc-400 font-medium italic">
+                            <span className="text-indigo-400 non-italic font-bold uppercase text-[9px] mr-2">Sample Output:</span>
+                            {viralChoice.sampleOutcome}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Other Styles Grid */}
+                {otherChoices.length > 0 && (
+                  <div className="flex overflow-x-auto pb-2 space-x-2 custom-scrollbar scrollbar-hide">
+                    {otherChoices.map((style) => (
                       <button
                         key={style.id}
                         onClick={() => applySuggestedPrompt(style.prompt)}
@@ -315,11 +285,9 @@ export default function App() {
                         <i className={`fa-solid ${style.icon} text-[10px] text-zinc-500 group-hover:text-indigo-400`}></i>
                         <span className="text-[11px] font-medium whitespace-nowrap">{style.label}</span>
                       </button>
-                    ))
-                  ) : !isGeneratingSuggestions && (
-                    <p className="text-[11px] text-zinc-600 italic">No suggestions available.</p>
-                  )}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -329,12 +297,7 @@ export default function App() {
                   <i className="fa-solid fa-terminal mr-2 text-indigo-500"></i>
                   Edit Prompt
                 </label>
-                <button 
-                  onClick={() => setPrompt(INITIAL_PROMPT)}
-                  className="text-xs text-zinc-500 hover:text-indigo-400 transition-colors"
-                >
-                  Reset
-                </button>
+                <button onClick={() => setPrompt(INITIAL_PROMPT)} className="text-xs text-zinc-500 hover:text-indigo-400 transition-colors">Reset</button>
               </div>
               <textarea 
                 value={prompt}
@@ -349,29 +312,9 @@ export default function App() {
                 </div>
               )}
               <div className="flex justify-end space-x-4">
-                <input 
-                  type="file" 
-                  ref={fileInputRef} 
-                  onChange={handleFileUpload} 
-                  className="hidden" 
-                  accept="image/*"
-                />
-                <Button 
-                  variant="secondary" 
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={imageState.isProcessing}
-                >
-                  Change
-                </Button>
-                <Button 
-                  onClick={handleEdit} 
-                  disabled={!imageState.originalUrl || !prompt || imageState.isProcessing}
-                  isLoading={imageState.isProcessing}
-                  icon={<i className="fa-solid fa-sparkles"></i>}
-                  className="min-w-[140px]"
-                >
-                  Apply AI Edit
-                </Button>
+                <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept="image/*" />
+                <Button variant="secondary" onClick={() => fileInputRef.current?.click()} disabled={imageState.isProcessing}>Change</Button>
+                <Button onClick={handleEdit} disabled={!imageState.originalUrl || !prompt || imageState.isProcessing} isLoading={imageState.isProcessing} icon={<i className="fa-solid fa-sparkles"></i>} className="min-w-[140px]">Apply AI Edit</Button>
               </div>
             </div>
           </div>
@@ -380,59 +323,38 @@ export default function App() {
         <div className="lg:col-span-4 space-y-6">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-xl flex flex-col h-full max-h-[800px]">
             <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
-              <h2 className="font-semibold flex items-center">
-                <i className="fa-solid fa-clock-rotate-left mr-2 text-zinc-500"></i>
-                History
-              </h2>
+              <h2 className="font-semibold flex items-center"><i className="fa-solid fa-clock-rotate-left mr-2 text-zinc-500"></i>History</h2>
               <span className="text-xs text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">{history.length}</span>
             </div>
-            
             <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
               {history.length === 0 ? (
                 <div className="text-center py-12 px-4">
-                  <div className="w-12 h-12 bg-zinc-800/50 rounded-full flex items-center justify-center mx-auto mb-3 opacity-20">
-                    <i className="fa-solid fa-history text-2xl"></i>
-                  </div>
+                  <div className="w-12 h-12 bg-zinc-800/50 rounded-full flex items-center justify-center mx-auto mb-3 opacity-20"><i className="fa-solid fa-history text-2xl"></i></div>
                   <p className="text-zinc-600 text-sm">No recent edits.</p>
                 </div>
               ) : (
                 history.map((item) => (
                   <div key={item.id} className="group relative bg-zinc-950 rounded-xl border border-zinc-800 p-3 hover:border-zinc-700 transition-all cursor-pointer">
                     <div className="aspect-square rounded-lg overflow-hidden mb-3 bg-zinc-900">
-                      <img src={item.url} alt="History thumbnail" className="w-full h-full object-cover" />
+                      <img src={item.url} alt="Thumbnail" className="w-full h-full object-cover" />
                     </div>
-                    <p className="text-[11px] text-zinc-500 line-clamp-2 leading-relaxed mb-2">
-                      {item.prompt}
-                    </p>
+                    <p className="text-[11px] text-zinc-500 line-clamp-2 leading-relaxed mb-2">{item.prompt}</p>
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-zinc-600 font-mono">
-                        {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
+                      <span className="text-[10px] text-zinc-600 font-mono">{new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                       <div className="flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button 
-                          onClick={() => setImageState(s => ({...s, editedUrl: item.url}))}
-                          className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"
-                        >
-                          <i className="fa-solid fa-eye text-[10px]"></i>
-                        </button>
-                        <button 
-                          onClick={() => downloadImage(item.url)}
-                          className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"
-                        >
-                          <i className="fa-solid fa-download text-[10px]"></i>
-                        </button>
+                        <button onClick={() => setImageState(s => ({...s, editedUrl: item.url}))} className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"><i className="fa-solid fa-eye text-[10px]"></i></button>
+                        <button onClick={() => downloadImage(item.url)} className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"><i className="fa-solid fa-download text-[10px]"></i></button>
                       </div>
                     </div>
                   </div>
                 ))
               )}
             </div>
-            
             <div className="p-4 bg-zinc-950/50 border-t border-zinc-800">
               <div className="p-3 rounded-xl bg-indigo-500/5 border border-indigo-500/10">
                 <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-tighter mb-1">System Health</h4>
                 <p className="text-[10px] text-zinc-500 leading-tight">
-                  {process.env.API_KEY ? "Gemini Models are ready to process your request." : "Disconnected: No API Key detected."}
+                  Gemini Flash is online and ready for processing.
                 </p>
               </div>
             </div>
@@ -442,9 +364,7 @@ export default function App() {
 
       <footer className="py-8 border-t border-zinc-900">
         <div className="container mx-auto px-4 text-center">
-          <p className="text-zinc-600 text-sm">
-            Powered by Google Gemini &bull; Real-time AI Vision Edit
-          </p>
+          <p className="text-zinc-600 text-sm">Powered by Google Gemini &bull; Viral AI Styling Engine</p>
         </div>
       </footer>
     </div>
