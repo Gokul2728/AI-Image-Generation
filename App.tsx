@@ -1,30 +1,51 @@
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Button } from './components/Button';
-import { editImage } from './services/geminiService';
+import { editImage, generateSuggestedPrompts } from './services/geminiService';
 import { ImageState, EditHistoryItem } from './types';
 
 const INITIAL_PROMPT = `Without changing the face. High-angle POV, medium close-up of a young South Asian woman with long messy dark hair, reclining on floral bedding. Intimate calm gaze, dewy makeup with pink blush and highlighter. Wearing pastel pink chiffon ethnic wear with shimmering gold Zari work, jhumkas, and bangles. Hard on-camera flash lighting, deep vignette, dark bedroom background with wooden headboard. Lo-fi grainy CCD texture nostalgic mood.`;
 
+interface SuggestedPrompt {
+  id: string;
+  label: string;
+  icon: string;
+  prompt: string;
+}
+
 export default function App() {
-  const [imageState, setImageState] = useState<ImageState>({
+  const [imageState, setImageState] = useState<ImageState & { _showOrig?: boolean }>({
     originalUrl: '',
     isProcessing: false,
   });
   const [prompt, setPrompt] = useState(INITIAL_PROMPT);
   const [history, setHistory] = useState<EditHistoryItem[]>([]);
+  const [suggestedPrompts, setSuggestedPrompts] = useState<SuggestedPrompt[]>([]);
+  const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
+        const base64 = event.target?.result as string;
         setImageState({
-          originalUrl: event.target?.result as string,
+          originalUrl: base64,
           isProcessing: false,
           error: undefined
         });
+        
+        // Trigger suggestion generation
+        setIsGeneratingSuggestions(true);
+        try {
+          const suggestions = await generateSuggestedPrompts(base64);
+          setSuggestedPrompts(suggestions);
+        } catch (err) {
+          console.error("Prompt generation failed", err);
+        } finally {
+          setIsGeneratingSuggestions(false);
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -53,6 +74,7 @@ export default function App() {
 
   const clearImage = () => {
     setImageState({ originalUrl: '', isProcessing: false });
+    setSuggestedPrompts([]);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -61,6 +83,10 @@ export default function App() {
     link.href = url;
     link.download = `lumina-edit-${Date.now()}.png`;
     link.click();
+  };
+
+  const applySuggestedPrompt = (p: string) => {
+    setPrompt(p);
   };
 
   return (
@@ -79,7 +105,7 @@ export default function App() {
               Billing Info
             </Button>
             <span className="text-xs px-2 py-1 rounded bg-indigo-500/10 text-indigo-400 font-mono border border-indigo-500/20">
-              Gemini 2.5 Flash
+              Gemini 3 + 2.5
             </span>
           </div>
         </div>
@@ -108,14 +134,12 @@ export default function App() {
               </div>
             ) : (
               <div className="relative w-full h-full">
-                {/* Image Display */}
                 <img 
                   src={imageState.editedUrl || imageState.originalUrl} 
                   alt="Editor workspace"
                   className={`w-full h-full object-contain transition-all duration-700 ${imageState.isProcessing ? 'blur-sm grayscale opacity-50' : ''}`}
                 />
                 
-                {/* Overlay Controls */}
                 <div className="absolute top-4 right-4 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                   {imageState.editedUrl && (
                     <Button 
@@ -137,7 +161,6 @@ export default function App() {
                   </Button>
                 </div>
 
-                {/* Processing State */}
                 {imageState.isProcessing && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center space-y-4 bg-zinc-950/30 backdrop-blur-[2px]">
                     <div className="relative w-16 h-16">
@@ -148,7 +171,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Compare View Label */}
                 {imageState.editedUrl && !imageState.isProcessing && (
                   <div className="absolute bottom-4 left-4 flex space-x-2">
                     <span className="bg-indigo-600 text-[10px] uppercase font-bold px-2 py-1 rounded shadow-lg">
@@ -166,8 +188,7 @@ export default function App() {
                   </div>
                 )}
                 
-                {/* Compare Toggle Logic (simple hidden img overlay) */}
-                {(imageState as any)._showOrig && imageState.editedUrl && (
+                {imageState._showOrig && imageState.editedUrl && (
                    <img 
                     src={imageState.originalUrl} 
                     alt="Original comparison"
@@ -179,55 +200,96 @@ export default function App() {
           </div>
 
           {/* Control Panel */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-xl space-y-4">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wider flex items-center">
-                <i className="fa-solid fa-terminal mr-2 text-indigo-500"></i>
-                Transformation Prompt
-              </label>
-              <button 
-                onClick={() => setPrompt(INITIAL_PROMPT)}
-                className="text-xs text-zinc-500 hover:text-indigo-400 transition-colors"
-              >
-                Reset to default
-              </button>
-            </div>
-            <textarea 
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Describe the styling, mood, or edits..."
-              className="w-full h-32 bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-zinc-100 placeholder-zinc-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none outline-none leading-relaxed"
-            />
-            {imageState.error && (
-              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-start space-x-3">
-                <i className="fa-solid fa-circle-exclamation text-red-500 mt-1"></i>
-                <p className="text-sm text-red-400">{imageState.error}</p>
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-xl space-y-6">
+            {/* Suggested Prompts Section */}
+            {imageState.originalUrl && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <i className="fa-solid fa-wand-magic text-indigo-400 text-xs"></i>
+                    <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Dynamic Style Suggestions</h3>
+                  </div>
+                  {isGeneratingSuggestions && (
+                    <div className="flex items-center space-x-2 text-[10px] text-zinc-500 animate-pulse">
+                      <i className="fa-solid fa-spinner fa-spin"></i>
+                      <span>Analyzing image...</span>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="flex overflow-x-auto pb-2 space-x-2 custom-scrollbar scrollbar-hide">
+                  {isGeneratingSuggestions ? (
+                    [...Array(4)].map((_, i) => (
+                      <div key={i} className="flex-shrink-0 w-32 h-8 bg-zinc-800 rounded-full animate-pulse border border-zinc-700"></div>
+                    ))
+                  ) : suggestedPrompts.length > 0 ? (
+                    suggestedPrompts.map((style) => (
+                      <button
+                        key={style.id}
+                        onClick={() => applySuggestedPrompt(style.prompt)}
+                        className="flex-shrink-0 flex items-center space-x-2 px-3 py-1.5 rounded-full bg-zinc-800 border border-zinc-700 hover:border-indigo-500/50 hover:bg-zinc-700 transition-all group"
+                      >
+                        <i className={`fa-solid ${style.icon} text-[10px] text-zinc-500 group-hover:text-indigo-400`}></i>
+                        <span className="text-[11px] font-medium whitespace-nowrap">{style.label}</span>
+                      </button>
+                    ))
+                  ) : !isGeneratingSuggestions && (
+                    <p className="text-[11px] text-zinc-600">No suggestions available.</p>
+                  )}
+                </div>
               </div>
             )}
-            <div className="flex justify-end space-x-4">
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleFileUpload} 
-                className="hidden" 
-                accept="image/*"
+
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-semibold text-zinc-400 uppercase tracking-wider flex items-center">
+                  <i className="fa-solid fa-terminal mr-2 text-indigo-500"></i>
+                  Transformation Prompt
+                </label>
+                <button 
+                  onClick={() => setPrompt(INITIAL_PROMPT)}
+                  className="text-xs text-zinc-500 hover:text-indigo-400 transition-colors"
+                >
+                  Reset to default
+                </button>
+              </div>
+              <textarea 
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="Describe the styling, mood, or edits..."
+                className="w-full h-32 bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-zinc-100 placeholder-zinc-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none outline-none leading-relaxed"
               />
-              <Button 
-                variant="secondary" 
-                onClick={() => fileInputRef.current?.click()}
-                disabled={imageState.isProcessing}
-              >
-                Change Photo
-              </Button>
-              <Button 
-                onClick={handleEdit} 
-                disabled={!imageState.originalUrl || !prompt || imageState.isProcessing}
-                isLoading={imageState.isProcessing}
-                icon={<i className="fa-solid fa-sparkles"></i>}
-                className="min-w-[140px]"
-              >
-                Process Edit
-              </Button>
+              {imageState.error && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-start space-x-3">
+                  <i className="fa-solid fa-circle-exclamation text-red-500 mt-1"></i>
+                  <p className="text-sm text-red-400">{imageState.error}</p>
+                </div>
+              )}
+              <div className="flex justify-end space-x-4">
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={handleFileUpload} 
+                  className="hidden" 
+                  accept="image/*"
+                />
+                <Button 
+                  variant="secondary" 
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={imageState.isProcessing}
+                >
+                  Change Photo
+                </Button>
+                <Button 
+                  onClick={handleEdit} 
+                  disabled={!imageState.originalUrl || !prompt || imageState.isProcessing}
+                  isLoading={imageState.isProcessing}
+                  icon={<i className="fa-solid fa-sparkles"></i>}
+                  className="min-w-[140px]"
+                >
+                  Process Edit
+                </Button>
+              </div>
             </div>
           </div>
         </div>
@@ -288,9 +350,9 @@ export default function App() {
             
             <div className="p-4 bg-zinc-950/50 border-t border-zinc-800">
               <div className="p-3 rounded-xl bg-indigo-500/5 border border-indigo-500/10">
-                <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-tighter mb-1">Model: Gemini 2.5 Flash</h4>
+                <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-tighter mb-1">Dual Model Pipeline</h4>
                 <p className="text-[10px] text-zinc-500 leading-tight">
-                  High-speed multimodal inference optimized for image understanding and synthesis.
+                  Gemini 3 Flash analyzes your image for trends, and Gemini 2.5 Flash renders the masterpiece.
                 </p>
               </div>
             </div>
@@ -302,7 +364,7 @@ export default function App() {
       <footer className="py-8 border-t border-zinc-900">
         <div className="container mx-auto px-4 text-center">
           <p className="text-zinc-600 text-sm">
-            Powered by Google Gemini 2.5 Flash Image &bull; AI Stylization Engine
+            Powered by Google Gemini &bull; Intelligent Stylization Engine
           </p>
         </div>
       </footer>
